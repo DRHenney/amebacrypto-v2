@@ -44,7 +44,7 @@ contract SwapWETHForUSDC is Script {
         poolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 10000, // 1.0% (pool v2)
+            fee: 5000, // 0.5% (pool v2 recriada)
             tickSpacing: 60,
             hooks: IHooks(hookAddress)
         });

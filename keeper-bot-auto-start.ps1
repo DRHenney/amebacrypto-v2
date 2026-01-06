@@ -230,29 +230,169 @@ $lastBlockChecked = 0
 
 # Obter bloco atual
 try {
-    $currentBlock = & "C:\foundry\bin\cast.exe" block-number --rpc-url $rpcUrl 2>&1
+    $currentBlock = [int](& "C:\foundry\bin\cast.exe" block-number --rpc-url $rpcUrl 2>&1)
     if ($LASTEXITCODE -eq 0) {
-        $lastBlockChecked = [int]$currentBlock - 1000  # Verificar últimos 1000 blocos inicialmente
+        $lastBlockChecked = $currentBlock - 10000  # Verificar últimos 10k blocos inicialmente
         Write-Host "Bloco atual: $currentBlock" -ForegroundColor Gray
         Write-Host "Verificando a partir do bloco: $lastBlockChecked" -ForegroundColor Gray
     }
 } catch {
     Write-Host "[AVISO] Nao foi possivel obter bloco atual" -ForegroundColor Yellow
+    $currentBlock = 0
 }
 
 Write-Host ""
 Write-Host "=== Iniciando Monitoramento ===" -ForegroundColor Green
 Write-Host ""
 
-# Verificar pools existentes no hook (via eventos históricos)
+# Função para verificar pools existentes diretamente do hook
+function Get-ExistingPoolsFromHook {
+    Write-Host "Verificando pools existentes no hook..." -ForegroundColor Cyan
+    
+    $pools = @()
+    
+    # Método 1: Buscar TODOS os eventos PoolAutoEnabled do hook (TODAS as pools)
+    try {
+        Write-Host "  Buscando TODOS os eventos PoolAutoEnabled do hook..." -ForegroundColor Gray
+        
+        if ($currentBlock -gt 0) {
+            # Buscar eventos desde o deploy do hook (ou últimos 50k blocos)
+            $fromBlock = [Math]::Max(0, $currentBlock - 50000)
+            
+            $eventSignature = "PoolAutoEnabled(bytes32,address,address,uint24,int24,address)"
+            
+            $logs = & "C:\foundry\bin\cast.exe" logs `
+                --from-block $fromBlock `
+                --to-block $currentBlock `
+                --address $hookAddress `
+                --rpc-url $rpcUrl `
+                $eventSignature 2>&1
+            
+            if ($LASTEXITCODE -eq 0 -and $logs) {
+                Write-Host "  [OK] Eventos encontrados, processando..." -ForegroundColor Green
+                
+                # Parse dos logs
+                foreach ($log in $logs) {
+                    # Extrair informações do evento
+                    # Formato do cast logs pode variar, vamos tentar extrair
+                    if ($log -match "poolId.*?0x([a-fA-F0-9]{64})") {
+                        $poolIdHex = $matches[1]
+                        $poolId = "0x$poolIdHex"
+                        
+                        # Tentar extrair outros campos
+                        $token0 = $null
+                        $token1 = $null
+                        $fee = 0
+                        $tickSpacing = 60
+                        
+                        if ($log -match "currency0.*?0x([a-fA-F0-9]{40})") {
+                            $token0 = "0x$($matches[1])"
+                        }
+                        if ($log -match "currency1.*?0x([a-fA-F0-9]{40})") {
+                            $token1 = "0x$($matches[1])"
+                        }
+                        if ($log -match "fee.*?(\d+)") {
+                            $fee = [int]$matches[1]
+                        }
+                        if ($log -match "tickSpacing.*?(-?\d+)") {
+                            $tickSpacing = [int]$matches[1]
+                        }
+                        
+                        # Se temos poolId, adicionar (mesmo sem todos os campos)
+                        if ($poolId) {
+                            $poolKey = $poolId
+                            if (-not ($pools | Where-Object { $_.PoolId -eq $poolKey })) {
+                                $pool = @{
+                                    PoolId = $poolId
+                                    Token0 = if ($token0) { $token0 } else { "unknown" }
+                                    Token1 = if ($token1) { $token1 } else { "unknown" }
+                                    Fee = $fee
+                                    TickSpacing = $tickSpacing
+                                    HookAddress = $hookAddress
+                                    PoolManager = $poolManagerAddress
+                                    DetectedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                                    Source = "PoolAutoEnabled Event"
+                                }
+                                $pools += $pool
+                                Write-Host "    [OK] Pool encontrada: $($poolId.Substring(0, [Math]::Min(16, $poolId.Length)))..." -ForegroundColor Green
+                            }
+                        }
+                    }
+                }
+            } else {
+                Write-Host "  [AVISO] Nenhum evento encontrado ou erro ao buscar" -ForegroundColor Yellow
+            }
+        }
+    } catch {
+        Write-Host "  [AVISO] Erro ao buscar eventos: $_" -ForegroundColor Yellow
+    }
+    
+    # Método 2: Adicionar pool padrão do .env como fallback (se eventos não funcionarem)
+    # Mas priorizar eventos PoolAutoEnabled que encontram TODAS as pools
+    if ($pools.Count -eq 0 -and $envVars["TOKEN0_ADDRESS"] -and $envVars["TOKEN1_ADDRESS"]) {
+        Write-Host "  [AVISO] Nenhuma pool encontrada via eventos, usando .env como fallback" -ForegroundColor Yellow
+        
+        # Adicionar pools com diferentes fees (pools podem ter fees diferentes)
+        $fees = @(3000, 5000, 10000)  # 0.3%, 0.5%, 1.0%
+        
+        foreach ($fee in $fees) {
+            $poolKey = "pool-$($envVars["TOKEN0_ADDRESS"])-$($envVars["TOKEN1_ADDRESS"])-$fee"
+            
+            $pool = @{
+                PoolId = $poolKey
+                Token0 = $envVars["TOKEN0_ADDRESS"]
+                Token1 = $envVars["TOKEN1_ADDRESS"]
+                Fee = $fee
+                TickSpacing = 60
+                HookAddress = $hookAddress
+                PoolManager = $poolManagerAddress
+                DetectedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+                Source = ".env fallback"
+            }
+            $pools += $pool
+        }
+        Write-Host "  [OK] Pools do .env adicionadas como fallback" -ForegroundColor Yellow
+    }
+    
+    # Método 3: Buscar eventos PoolAutoEnabled dos últimos blocos
+    if ($currentBlock -gt 0) {
+        try {
+            Write-Host "  Buscando eventos PoolAutoEnabled dos ultimos blocos..." -ForegroundColor Gray
+            
+            $eventSignature = "PoolAutoEnabled(bytes32,address,address,uint24,int24,address)"
+            
+            $logs = & "C:\foundry\bin\cast.exe" logs `
+                --from-block $lastBlockChecked `
+                --to-block $currentBlock `
+                --address $hookAddress `
+                --rpc-url $rpcUrl `
+                $eventSignature 2>&1
+            
+            if ($LASTEXITCODE -eq 0 -and $logs -and $logs.Count -gt 0) {
+                Write-Host "  [OK] Eventos encontrados nos logs" -ForegroundColor Green
+                # Parse dos logs seria feito aqui (complexo, melhor usar indexer em produção)
+            }
+        } catch {
+            Write-Host "  [AVISO] Erro ao buscar eventos: $_" -ForegroundColor Yellow
+        }
+    }
+    
+    return $pools
+}
+
+# Verificar pools existentes no hook
 Write-Host "Verificando pools existentes..." -ForegroundColor Cyan
-$existingPools = Detect-NewPoolsFromHook -FromBlock $lastBlockChecked -ToBlock $currentBlock
+$existingPools = Get-ExistingPoolsFromHook
 
 foreach ($pool in $existingPools) {
     $poolKey = $pool.PoolId
     if (-not $monitoredPools.ContainsKey($poolKey)) {
         $monitoredPools[$poolKey] = $pool
-        Write-Host "[OK] Pool existente adicionada: $($poolKey.Substring(0, [Math]::Min(16, $poolKey.Length)))..." -ForegroundColor Green
+        Write-Host "[OK] Pool existente adicionada: $poolKey" -ForegroundColor Green
+        Write-Host "    Token0: $($pool.Token0)" -ForegroundColor Gray
+        Write-Host "    Token1: $($pool.Token1)" -ForegroundColor Gray
+        Write-Host "    Fee: $($pool.Fee)" -ForegroundColor Gray
+        Write-Host "    [OK] Monitoramento iniciado automaticamente!" -ForegroundColor Green
     }
 }
 
