@@ -44,7 +44,7 @@ contract SwapWETHForUSDC is Script {
         poolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 3000, // 0.3%
+            fee: 10000, // 1.0% (pool v2)
             tickSpacing: 60,
             hooks: IHooks(hookAddress)
         });
@@ -82,13 +82,18 @@ contract SwapWETHForUSDC is Script {
         
         vm.startBroadcast(deployerPrivateKey);
         
-        // Deploy helper contract
+        // Deploy helper contract (new instance for each swap to avoid callback issues)
         SwapHelper helper = new SwapHelper(poolManager);
         console2.log("\nSwapHelper deployed at:", address(helper));
         
-        // Approve helper to spend WETH
-        weth.approve(address(helper), type(uint256).max);
-        console2.log("Approved helper for WETH");
+        // Approve helper to spend WETH (use type(uint256).max for unlimited approval)
+        uint256 currentAllowance = weth.allowance(deployer, address(helper));
+        if (currentAllowance < wethAmount) {
+            weth.approve(address(helper), type(uint256).max);
+            console2.log("Approved helper for WETH");
+        } else {
+            console2.log("Helper already approved for WETH");
+        }
         
         bytes memory hookData = "";
         

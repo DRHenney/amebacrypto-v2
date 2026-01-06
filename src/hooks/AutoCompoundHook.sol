@@ -95,6 +95,32 @@ contract AutoCompoundHook is BaseHook {
     event ProtocolFeePercentUpdated(uint256 oldValue, uint256 newValue);
     event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
     event ProtocolFeesWithdrawn(address indexed recipient, uint128 amount0, uint128 amount1);
+    
+    /// @notice Emitido quando protocol fees são transferidas automaticamente durante compound
+    /// @param protocolFeeRecipient Endereço que recebe as protocol fees
+    /// @param protocolAmount0 Quantidade de protocol fee em token0 (antes da conversão para USDC)
+    /// @param protocolAmount1 Quantidade de protocol fee em token1 (antes da conversão para USDC)
+    event ProtocolFeesTransferred(
+        address indexed protocolFeeRecipient,
+        uint256 protocolAmount0,
+        uint256 protocolAmount1
+    );
+    
+    /// @notice Emitido quando uma pool é inicializada e habilitada automaticamente
+    /// @param poolId ID da pool
+    /// @param currency0 Token0 da pool
+    /// @param currency1 Token1 da pool
+    /// @param fee Taxa da pool
+    /// @param tickSpacing Tick spacing da pool
+    /// @param hookAddress Endereço do hook (este contrato)
+    event PoolAutoEnabled(
+        PoolId indexed poolId,
+        Currency currency0,
+        Currency currency1,
+        uint24 fee,
+        int24 tickSpacing,
+        address hookAddress
+    );
 
     // Configurações por pool
     struct PoolConfig {
@@ -319,6 +345,7 @@ contract AutoCompoundHook is BaseHook {
     }
 
     /// @notice Callback após inicialização da pool
+    /// @dev Habilita automaticamente a pool e emite evento para keeper detectar
     function _afterInitialize(
         address,
         PoolKey calldata key,
@@ -331,6 +358,16 @@ contract AutoCompoundHook is BaseHook {
             poolConfigs[poolId] = PoolConfig({
                 enabled: true
             });
+            
+            // Emitir evento para keeper detectar automaticamente
+            emit PoolAutoEnabled(
+                poolId,
+                key.currency0,
+                key.currency1,
+                key.fee,
+                key.tickSpacing,
+                address(this)
+            );
         }
         return this.afterInitialize.selector;
     }
@@ -757,6 +794,9 @@ contract AutoCompoundHook is BaseHook {
             uint256 usdcBalance = IERC20(USDC()).balanceOf(address(this));
             if (usdcBalance > 0) {
                 IERC20(USDC()).transfer(feeRecipient, usdcBalance);
+                
+                // Emitir evento de transferência de protocol fees
+                emit ProtocolFeesTransferred(feeRecipient, protocolFee0, protocolFee1);
             }
         }
         
