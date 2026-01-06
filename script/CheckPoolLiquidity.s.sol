@@ -33,7 +33,7 @@ contract CheckPoolLiquidity is Script {
         PoolKey memory poolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 5000, // 0.5% (pool v2 recriada)
+            fee: 3000, // 0.3% (nova pool criada)
             tickSpacing: 60,
             hooks: IHooks(hookAddress)
         });
@@ -46,7 +46,7 @@ contract CheckPoolLiquidity is Script {
         console2.log("Hook:", hookAddress);
         console2.log("Token0:", Currency.unwrap(currency0));
         console2.log("Token1:", Currency.unwrap(currency1));
-        console2.log("Fee: 10000 (1.0%)");
+        console2.log("Fee: 3000 (0.3%)");
         console2.log("Tick Spacing: 60");
         console2.log("");
         

@@ -40,11 +40,11 @@ contract AddLiquidity is Script {
         Currency currency0 = Currency.wrap(token0Address < token1Address ? token0Address : token1Address);
         Currency currency1 = Currency.wrap(token0Address < token1Address ? token1Address : token0Address);
         
-        // Usar fee 5000 (0.5%) para pool v2 recriada
+        // Usar fee 3000 (0.3%) para nova pool criada
         poolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 5000, // 0.5% (pool v2 recriada)
+            fee: 3000, // 0.3% (nova pool com preço razoável)
             tickSpacing: 60,
             hooks: IHooks(hookAddress)
         });
@@ -58,11 +58,20 @@ contract AddLiquidity is Script {
         // Ticks must be aligned with tickSpacing (60)
         int24 tickSpacing = 60;
         
-        // Use a narrow range around current price (10 ticks = ~0.1% price range)
-        // This allows small amounts to generate liquidity
+        // Use a wider range around current price for extreme ticks
+        // For extreme ticks (> 500000 or < -500000), use a much wider range
+        int24 rangeTicks;
+        if (currentTick > 500000 || currentTick < -500000) {
+            // For extreme ticks, use 1000 ticks range (much wider)
+            rangeTicks = 1000;
+        } else {
+            // For normal ticks, use 10 ticks range
+            rangeTicks = 10;
+        }
+        
         // Calculate ticks aligned with tickSpacing
-        int24 tickLower = ((currentTick / tickSpacing) - 10) * tickSpacing;
-        int24 tickUpper = ((currentTick / tickSpacing) + 10) * tickSpacing;
+        int24 tickLower = ((currentTick / tickSpacing) - rangeTicks) * tickSpacing;
+        int24 tickUpper = ((currentTick / tickSpacing) + rangeTicks) * tickSpacing;
         
         // Ensure ticks are within bounds
         int24 minTick = TickMath.minUsableTick(tickSpacing);

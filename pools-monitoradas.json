@@ -1,0 +1,35 @@
+{
+    "pool-0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238-0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14-3000":  {
+                                                                                                            "Source":  ".env fallback",
+                                                                                                            "TickSpacing":  60,
+                                                                                                            "HookAddress":  "0xC5fB60De90960712B938dC19a7DC8a904d039540",
+                                                                                                            "PoolManager":  "0x76E9E1AFFDe82bb4544cE95EA58fFc2f9D45061f",
+                                                                                                            "DetectedAt":  "2026-01-06 13:59:43",
+                                                                                                            "Token1":  "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+                                                                                                            "PoolId":  "pool-0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238-0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14-3000",
+                                                                                                            "Token0":  "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+                                                                                                            "Fee":  3000
+                                                                                                        },
+    "pool-0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238-0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14-5000":  {
+                                                                                                            "Source":  ".env fallback",
+                                                                                                            "TickSpacing":  60,
+                                                                                                            "HookAddress":  "0xC5fB60De90960712B938dC19a7DC8a904d039540",
+                                                                                                            "PoolManager":  "0x76E9E1AFFDe82bb4544cE95EA58fFc2f9D45061f",
+                                                                                                            "DetectedAt":  "2026-01-06 13:59:43",
+                                                                                                            "Token1":  "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+                                                                                                            "PoolId":  "pool-0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238-0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14-5000",
+                                                                                                            "Token0":  "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+                                                                                                            "Fee":  5000
+                                                                                                        },
+    "pool-0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238-0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14-10000":  {
+                                                                                                             "Source":  ".env fallback",
+                                                                                                             "TickSpacing":  60,
+                                                                                                             "HookAddress":  "0xC5fB60De90960712B938dC19a7DC8a904d039540",
+                                                                                                             "PoolManager":  "0x76E9E1AFFDe82bb4544cE95EA58fFc2f9D45061f",
+                                                                                                             "DetectedAt":  "2026-01-06 13:59:43",
+                                                                                                             "Token1":  "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14",
+                                                                                                             "PoolId":  "pool-0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238-0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14-10000",
+                                                                                                             "Token0":  "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238",
+                                                                                                             "Fee":  10000
+                                                                                                         }
+}

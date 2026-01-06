@@ -50,7 +50,27 @@ contract CompoundHelper is IUnlockCallback {
             fees1: fees1
         }));
 
-        return abi.decode(poolManager.unlock(callbackData), (BalanceDelta));
+        BalanceDelta delta = abi.decode(poolManager.unlock(callbackData), (BalanceDelta));
+        
+        // Transfer protocol fees AFTER unlockCallback completes
+        // Get accumulated protocol fees from hook
+        uint128 protocolFee0 = hook.protocolFeeToken0();
+        uint128 protocolFee1 = hook.protocolFeeToken1();
+        
+        if (protocolFee0 > 0 || protocolFee1 > 0) {
+            // Take protocol fees from poolManager and send to hook
+            if (protocolFee0 > 0) {
+                key.currency0.take(poolManager, address(hook), protocolFee0, false);
+            }
+            if (protocolFee1 > 0) {
+                key.currency1.take(poolManager, address(hook), protocolFee1, false);
+            }
+            
+            // Call hook to process and transfer protocol fees to feeRecipient
+            hook.transferProtocolFees(key);
+        }
+        
+        return delta;
     }
 
     function unlockCallback(bytes calldata rawData) external returns (bytes memory) {
@@ -95,6 +115,9 @@ contract CompoundHelper is IUnlockCallback {
         uint256 realFees0 = feesAccrued.amount0() > 0 ? uint256(uint128(feesAccrued.amount0())) : 0;
         uint256 realFees1 = feesAccrued.amount1() > 0 ? uint256(uint128(feesAccrued.amount1())) : 0;
         hook.executeCompound(data.key, realFees0, realFees1);
+
+        // NOTE: Protocol fees transfer is done AFTER unlockCallback completes
+        // in executeCompound() function, because take() cannot be called inside unlockCallback
 
         // Return callerDelta (which includes both principal and fees)
         return abi.encode(callerDelta);

@@ -4,48 +4,57 @@ pragma solidity ^0.8.24;
 import {Script, console2} from "forge-std/Script.sol";
 import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 
-/// @notice Script to check token balances
+/// @notice Script para verificar saldos de tokens na carteira
 contract CheckBalance is Script {
-    function run() external {
+    function run() external view {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerPrivateKey);
         address token0Address = vm.envAddress("TOKEN0_ADDRESS");
         address token1Address = vm.envAddress("TOKEN1_ADDRESS");
         
-        vm.startBroadcast(deployerPrivateKey);
+        // Get liquidity amounts from env
+        uint256 requiredToken0 = vm.envUint("LIQUIDITY_TOKEN0_AMOUNT");
+        uint256 requiredToken1 = vm.envUint("LIQUIDITY_TOKEN1_AMOUNT");
         
-        address deployer = vm.addr(deployerPrivateKey);
-        
-        console2.log("=== Checking Token Balances ===");
-        console2.log("Wallet address:", deployer);
+        console2.log("=== Verificando Saldos ===");
+        console2.log("Carteira:", deployer);
         console2.log("");
         
-        // Check Token0 (USDC - 6 decimals)
+        // Check Token0 (USDC) balance
         IERC20Minimal token0 = IERC20Minimal(token0Address);
         uint256 balance0 = token0.balanceOf(deployer);
         console2.log("Token0 (USDC):", token0Address);
-        console2.log("Balance (wei):", balance0);
-        console2.log("Balance (USDC wei):", balance0);
-        console2.log("Balance (USDC):", balance0 / 1e6);
-        console2.log("Balance (USDC decimal):", (balance0 * 1000000) / 1e6, "/ 1000000");
+        console2.log("  Saldo:", balance0);
+        console2.log("  Requerido:", requiredToken0);
+        if (balance0 >= requiredToken0) {
+            console2.log("  [OK] Saldo suficiente!");
+        } else {
+            console2.log("  [ERRO] Saldo insuficiente!");
+            console2.log("  Faltam:", requiredToken0 - balance0);
+        }
         console2.log("");
         
-        // Check Token1 (WETH - 18 decimals)
+        // Check Token1 (WETH) balance
         IERC20Minimal token1 = IERC20Minimal(token1Address);
         uint256 balance1 = token1.balanceOf(deployer);
         console2.log("Token1 (WETH):", token1Address);
-        console2.log("Balance (wei):", balance1);
-        console2.log("Balance (WETH):", balance1 / 1e18);
+        console2.log("  Saldo:", balance1);
+        console2.log("  Requerido:", requiredToken1);
+        if (balance1 >= requiredToken1) {
+            console2.log("  [OK] Saldo suficiente!");
+        } else {
+            console2.log("  [ERRO] Saldo insuficiente!");
+            console2.log("  Faltam:", requiredToken1 - balance1);
+        }
         console2.log("");
         
-        // Calculate max USDC that can be added (leave 5% for gas)
-        uint256 maxUSDC = (balance0 * 95) / 100;
-        uint256 maxWETH = (balance1 * 95) / 100;
-        
-        console2.log("=== Recommended Amounts ===");
-        console2.log("Max USDC to add (95% of balance):", maxUSDC / 1e6);
-        console2.log("Max WETH to add (95% of balance):", maxWETH / 1e18);
-        
-        vm.stopBroadcast();
+        // Summary
+        console2.log("=== Resumo ===");
+        if (balance0 >= requiredToken0 && balance1 >= requiredToken1) {
+            console2.log("[OK] Saldos suficientes para adicionar liquidez!");
+        } else {
+            console2.log("[ERRO] Saldos insuficientes!");
+            console2.log("Precisa obter mais tokens antes de adicionar liquidez.");
+        }
     }
 }
-

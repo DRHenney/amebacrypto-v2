@@ -35,11 +35,10 @@ contract AutoCompoundKeeper is Script {
         Currency currency0 = Currency.wrap(token0Address < token1Address ? token0Address : token1Address);
         Currency currency1 = Currency.wrap(token0Address < token1Address ? token1Address : token0Address);
         
-        PoolKey memory         // Pool v2 recriada usa fee 5000 (0.5%)
-        poolKey = PoolKey({
+        PoolKey memory poolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 5000, // 0.5% (pool v2 recriada)
+            fee: 3000, // 0.3% (nova pool criada)
             tickSpacing: 60,
             hooks: IHooks(hookAddress)
         });

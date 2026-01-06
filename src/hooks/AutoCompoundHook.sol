@@ -766,38 +766,14 @@ contract AutoCompoundHook is BaseHook {
         uint256 protocolFee1 = (fees1 * protocolFeePercent) / 10000;
         
         // Se houver protocol fees, processar e enviar automaticamente
+        // NOTA: poolManager.take() NÃO pode ser chamado dentro de unlockCallback
+        // Os protocol fees precisam ser acumulados e transferidos DEPOIS do compound
+        // Isso será feito pelo CompoundHelper após o unlockCallback terminar
         if (protocolFee0 > 0 || protocolFee1 > 0) {
-            // Pegar os tokens do poolManager
-            if (protocolFee0 > 0) {
-                poolManager.take(key.currency0, address(this), protocolFee0);
-            }
-            if (protocolFee1 > 0) {
-                poolManager.take(key.currency1, address(this), protocolFee1);
-            }
-            
-            // Fazer swap para USDC se necessário
-            Currency usdcCurrency = Currency.wrap(USDC());
-            bool currency0IsUSDC = key.currency0 == usdcCurrency;
-            bool currency1IsUSDC = key.currency1 == usdcCurrency;
-            
-            // Se token0 não é USDC, fazer swap
-            if (protocolFee0 > 0 && !currency0IsUSDC) {
-                _swapToUSDC(key, key.currency0, protocolFee0);
-            }
-            
-            // Se token1 não é USDC, fazer swap
-            if (protocolFee1 > 0 && !currency1IsUSDC) {
-                _swapToUSDC(key, key.currency1, protocolFee1);
-            }
-            
-            // Transferir todo USDC acumulado para feeRecipient automaticamente
-            uint256 usdcBalance = IERC20(USDC()).balanceOf(address(this));
-            if (usdcBalance > 0) {
-                IERC20(USDC()).transfer(feeRecipient, usdcBalance);
-                
-                // Emitir evento de transferência de protocol fees
-                emit ProtocolFeesTransferred(feeRecipient, protocolFee0, protocolFee1);
-            }
+            // Acumular protocol fees nas variáveis de estado
+            // O CompoundHelper irá transferir depois do unlockCallback
+            protocolFeeToken0 += uint128(protocolFee0);
+            protocolFeeToken1 += uint128(protocolFee1);
         }
         
         // Calcular fees que serão reinvestidas (90%)
@@ -1108,7 +1084,49 @@ contract AutoCompoundHook is BaseHook {
         emit FeeRecipientUpdated(oldRecipient, _new);
     }
 
-    /// @notice Retira as protocol fees acumuladas
+    /// @notice Transfere protocol fees acumuladas para feeRecipient (pode ser chamado pelo CompoundHelper)
+    /// @dev Converte todas as protocol fees para USDC e envia para o fee recipient
+    /// @param key A chave da pool (necessária para identificar os tokens e fazer swaps)
+    function transferProtocolFees(PoolKey calldata key) external {
+        // Pode ser chamado pelo CompoundHelper (após unlockCallback) ou pelo owner
+        // CompoundHelper chama após unlockCallback terminar, então é seguro
+        
+        uint128 amount0 = protocolFeeToken0;
+        uint128 amount1 = protocolFeeToken1;
+        
+        // Resetar acumuladores ANTES de processar (para evitar reentrancy)
+        protocolFeeToken0 = 0;
+        protocolFeeToken1 = 0;
+        
+        if (amount0 == 0 && amount1 == 0) {
+            return; // Nada para transferir
+        }
+        
+        // Os tokens já devem estar no hook (transferidos pelo CompoundHelper via take)
+        // Fazer swap para USDC se necessário
+        Currency usdcCurrency = Currency.wrap(USDC());
+        bool currency0IsUSDC = key.currency0 == usdcCurrency;
+        bool currency1IsUSDC = key.currency1 == usdcCurrency;
+        
+        // Se token0 não é USDC, fazer swap
+        if (amount0 > 0 && !currency0IsUSDC) {
+            _swapToUSDC(key, key.currency0, amount0);
+        }
+        
+        // Se token1 não é USDC, fazer swap
+        if (amount1 > 0 && !currency1IsUSDC) {
+            _swapToUSDC(key, key.currency1, amount1);
+        }
+        
+        // Transferir todo USDC acumulado para feeRecipient
+        uint256 usdcBalance = IERC20(USDC()).balanceOf(address(this));
+        if (usdcBalance > 0) {
+            IERC20(USDC()).transfer(feeRecipient, usdcBalance);
+            emit ProtocolFeesTransferred(feeRecipient, amount0, amount1);
+        }
+    }
+
+    /// @notice Retira as protocol fees acumuladas (função manual para owner)
     /// @dev Converte todas as protocol fees para USDC e envia para o fee recipient
     /// @param key A chave da pool (necessária para identificar os tokens e fazer swaps)
     function withdrawProtocolFees(PoolKey calldata key) external onlyOwner {
