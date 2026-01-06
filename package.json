@@ -1,0 +1,24 @@
+{
+  "name": "amebacrypto-v2-keeper",
+  "version": "2.0.0",
+  "description": "AutoCompound Hook Keeper com detecção automática de pools",
+  "main": "monitor-pools-node.js",
+  "scripts": {
+    "monitor": "node monitor-pools-node.js",
+    "start": "node monitor-pools-node.js"
+  },
+  "keywords": [
+    "uniswap",
+    "v4",
+    "hook",
+    "autocompound",
+    "keeper"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.9.0",
+    "dotenv": "^16.3.1"
+  }
+}
+

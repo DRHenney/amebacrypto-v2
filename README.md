@@ -1,6 +1,8 @@
-# 🦠 AmebaCrypto - AutoCompound Hook para Uniswap v4
+# 🦠 AmebaCrypto v2 - AutoCompound Hook para Uniswap v4
 
 > Hook inteligente que automaticamente reinveste taxas acumuladas de volta na pool de liquidez, maximizando retornos para provedores de liquidez.
+
+**Baseada na v1 estável**: [https://github.com/DRHenney/amebacrypto](https://github.com/DRHenney/amebacrypto)
 
 [![Solidity](https://img.shields.io/badge/Solidity-0.8.24-blue)](https://soliditylang.org/)
 [![Foundry](https://img.shields.io/badge/Foundry-✓-green)](https://book.getfoundry.sh/)
@@ -24,6 +26,30 @@ O `AutoCompoundHook` é um hook para Uniswap V4 que:
 - 💰 **Economiza gas** verificando rentabilidade antes de executar
 - 🔒 **Seguro** com verificações de acesso e proteções contra overflow
 - ⚙️ **Configurável** por pool (preços, tick range, enabled/disabled)
+
+---
+
+## 🗺️ **Roadmap v2**
+
+A v2 do AmebaCrypto está sendo desenvolvida com foco em funcionalidades avançadas e otimizações:
+
+### **Funcionalidades Planejadas**
+
+- 🔄 **Dynamic Fees**: Sistema de taxas dinâmicas que se ajustam automaticamente baseado em volume e volatilidade
+- 📊 **Auto-Rebalancing de Ranges**: Rebalanceamento automático de tick ranges para otimizar exposição e fees
+- 💱 **Integração com Lending**: Integração com protocolos de lending (Aave, Compound) para maximizar yield
+- 🎯 **Otimização de Gas**: Melhorias significativas na eficiência de gas através de otimizações de storage e lógica
+- 📈 **Analytics Avançado**: Dashboard e métricas detalhadas de performance e retornos
+- 🔐 **Multi-Signature Support**: Suporte para controle multi-assinatura para operações críticas
+- 🌐 **Cross-Chain Support**: Preparação para suporte multi-chain
+
+### **Diferenças da v1**
+
+A v2 mantém toda a funcionalidade estável da v1 enquanto adiciona:
+- Arquitetura mais modular e extensível
+- Melhor separação de responsabilidades
+- Preparação para features avançadas
+- Base sólida para evolução contínua
 
 ---
 
@@ -102,8 +128,8 @@ O compound é executado automaticamente quando:
 
 ```bash
 # Clone o repositório
-git clone https://github.com/DRHenney/amebacrypto.git
-cd amebacrypto
+git clone https://github.com/DRHenney/amebacrypto-v2.git
+cd amebacrypto-v2
 
 # Instale dependências
 forge install
@@ -246,7 +272,8 @@ Este projeto está sob a licença MIT. Veja [LICENSE](./LICENSE) para mais detal
 - [Uniswap V4 Docs](https://docs.uniswap.org/contracts/v4/overview)
 - [Foundry Book](https://book.getfoundry.sh/)
 - [v4-by-example](https://v4-by-example.org)
-- [GitHub Repository](https://github.com/DRHenney/amebacrypto)
+- [GitHub Repository (v2)](https://github.com/DRHenney/amebacrypto-v2)
+- [Repositório Original (v1)](https://github.com/DRHenney/amebacrypto)
 
 ---
 

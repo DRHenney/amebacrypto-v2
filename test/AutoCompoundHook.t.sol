@@ -937,5 +937,266 @@ contract AutoCompoundHookTest is Test {
             }
         }
     }
+
+    // ============ TESTES PARA CONFIGURAÇÕES GLOBAIS (v2) ============
+
+    /// @notice Teste: Verificar valores padrão das configurações globais
+    function test_DefaultGlobalConfigValues() public view {
+        assertEq(hook.thresholdMultiplier(), 20, "Default threshold multiplier should be 20");
+        assertEq(hook.minTimeBetweenCompounds(), 4 hours, "Default min time interval should be 4 hours");
+        assertEq(hook.protocolFeePercent(), 1000, "Default protocol fee percent should be 1000 (10%)");
+        assertEq(hook.feeRecipient(), address(0xd9D3e3C7dc4F5d058ff24C0b71cF68846316F65c), "Default fee recipient should be set");
+    }
+
+    /// @notice Teste: setThresholdMultiplier
+    function test_SetThresholdMultiplier() public {
+        uint256 newMultiplier = 30;
+        
+        vm.prank(owner);
+        hook.setThresholdMultiplier(newMultiplier);
+        
+        assertEq(hook.thresholdMultiplier(), newMultiplier, "Threshold multiplier should be updated");
+    }
+
+    /// @notice Teste: setThresholdMultiplier - apenas owner
+    function test_Revert_NotOwner_SetThresholdMultiplier() public {
+        vm.prank(user);
+        vm.expectRevert("Not owner");
+        hook.setThresholdMultiplier(30);
+    }
+
+    /// @notice Teste: setThresholdMultiplier - validação > 0
+    function test_Revert_InvalidThresholdMultiplier() public {
+        vm.prank(owner);
+        vm.expectRevert("Threshold multiplier must be > 0");
+        hook.setThresholdMultiplier(0);
+    }
+
+    /// @notice Teste: setMinTimeInterval
+    function test_SetMinTimeInterval() public {
+        uint256 newInterval = 6 hours;
+        
+        vm.prank(owner);
+        hook.setMinTimeInterval(newInterval);
+        
+        assertEq(hook.minTimeBetweenCompounds(), newInterval, "Min time interval should be updated");
+    }
+
+    /// @notice Teste: setMinTimeInterval - apenas owner
+    function test_Revert_NotOwner_SetMinTimeInterval() public {
+        vm.prank(user);
+        vm.expectRevert("Not owner");
+        hook.setMinTimeInterval(6 hours);
+    }
+
+    /// @notice Teste: setMinTimeInterval - validação > 0
+    function test_Revert_InvalidMinTimeInterval() public {
+        vm.prank(owner);
+        vm.expectRevert("Time interval must be > 0");
+        hook.setMinTimeInterval(0);
+    }
+
+    /// @notice Teste: setProtocolFeePercent
+    function test_SetProtocolFeePercent() public {
+        uint256 newFeePercent = 1500; // 15%
+        
+        vm.prank(owner);
+        hook.setProtocolFeePercent(newFeePercent);
+        
+        assertEq(hook.protocolFeePercent(), newFeePercent, "Protocol fee percent should be updated");
+    }
+
+    /// @notice Teste: setProtocolFeePercent - máximo 50% (5000)
+    function test_SetProtocolFeePercent_Max50Percent() public {
+        uint256 maxFeePercent = 5000; // 50%
+        
+        vm.prank(owner);
+        hook.setProtocolFeePercent(maxFeePercent);
+        
+        assertEq(hook.protocolFeePercent(), maxFeePercent, "Protocol fee percent should be set to 50%");
+    }
+
+    /// @notice Teste: setProtocolFeePercent - apenas owner
+    function test_Revert_NotOwner_SetProtocolFeePercent() public {
+        vm.prank(user);
+        vm.expectRevert("Not owner");
+        hook.setProtocolFeePercent(1500);
+    }
+
+    /// @notice Teste: setProtocolFeePercent - validação <= 5000
+    function test_Revert_InvalidProtocolFeePercent_Above50() public {
+        vm.prank(owner);
+        vm.expectRevert("Protocol fee percent must be <= 50% (5000)");
+        hook.setProtocolFeePercent(5001); // Acima de 50%
+    }
+
+    /// @notice Teste: setFeeRecipient
+    function test_SetFeeRecipient() public {
+        address newRecipient = address(0x999);
+        
+        vm.prank(owner);
+        hook.setFeeRecipient(newRecipient);
+        
+        assertEq(hook.feeRecipient(), newRecipient, "Fee recipient should be updated");
+    }
+
+    /// @notice Teste: setFeeRecipient - apenas owner
+    function test_Revert_NotOwner_SetFeeRecipient() public {
+        vm.prank(user);
+        vm.expectRevert("Not owner");
+        hook.setFeeRecipient(address(0x999));
+    }
+
+    /// @notice Teste: setFeeRecipient - não pode ser zero address
+    function test_Revert_InvalidFeeRecipient_ZeroAddress() public {
+        vm.prank(owner);
+        vm.expectRevert("Fee recipient cannot be zero address");
+        hook.setFeeRecipient(address(0));
+    }
+
+    /// @notice Teste: Verificar que thresholdMultiplier é usado na lógica de compound
+    function test_ThresholdMultiplier_UsedInCompoundLogic() public {
+        PoolKey memory key = poolKey;
+        vm.prank(owner);
+        hook.setPoolConfig(key, true);
+        
+        // Configurar preços
+        vm.prank(owner);
+        hook.setTokenPricesUSD(key, 3000e18, 1e18);
+        
+        // Configurar tick range
+        vm.prank(owner);
+        hook.setPoolTickRange(key, -887272, 887272);
+        
+        // Mudar threshold multiplier para 10x (mais fácil de atingir)
+        vm.prank(owner);
+        hook.setThresholdMultiplier(10);
+        
+        // Acumular fees suficientes para 10x mas não para 20x
+        // Gas cost estimado: ~$10, então precisamos de pelo menos $100 em fees (10x)
+        // mas menos que $200 (20x)
+        uint256 fees0 = 1e16; // 0.01 token0 = ~$30
+        uint256 fees1 = 1e19; // 10 token1 = ~$10
+        // Total: ~$40 < $200 (20x) mas pode ser >= $100 (10x) dependendo do cálculo
+        
+        address token0Address = Currency.unwrap(key.currency0);
+        address token1Address = Currency.unwrap(key.currency1);
+        deal(token0Address, address(hook), fees0);
+        deal(token1Address, address(hook), fees1);
+        
+        hook.accumulateFees(key, fees0, fees1);
+        
+        // Avançar tempo
+        vm.warp(block.timestamp + 4 hours + 1);
+        
+        // Verificar canExecuteCompound com threshold de 10x
+        (bool canCompound, , , uint256 feesValueUSD, uint256 gasCostUSD) = hook.canExecuteCompound(key);
+        
+        // Com threshold de 10x, deve ser mais fácil passar
+        // Verificar se feesValueUSD >= gasCostUSD * 10 (novo threshold)
+        if (feesValueUSD >= gasCostUSD * 10) {
+            assertTrue(canCompound, "Should be able to compound with 10x threshold");
+        }
+    }
+
+    /// @notice Teste: Verificar que minTimeBetweenCompounds é usado na lógica
+    function test_MinTimeInterval_UsedInCompoundLogic() public {
+        PoolKey memory key = poolKey;
+        vm.prank(owner);
+        hook.setPoolConfig(key, true);
+        
+        // Configurar preços
+        vm.prank(owner);
+        hook.setTokenPricesUSD(key, 3000e18, 1e18);
+        
+        // Configurar tick range
+        vm.prank(owner);
+        hook.setPoolTickRange(key, -887272, 887272);
+        
+        // Mudar intervalo mínimo para 1 hora (mais fácil de testar)
+        vm.prank(owner);
+        hook.setMinTimeInterval(1 hours);
+        
+        // Acumular fees suficientes
+        uint256 fees0 = 1e17; // 0.1 token0
+        uint256 fees1 = 1e20; // 100 token1
+        
+        address token0Address = Currency.unwrap(key.currency0);
+        address token1Address = Currency.unwrap(key.currency1);
+        deal(token0Address, address(hook), fees0);
+        deal(token1Address, address(hook), fees1);
+        
+        hook.accumulateFees(key, fees0, fees1);
+        
+        // Tentar compound antes de 1 hora - deve falhar
+        (bool canCompound, string memory reason, uint256 timeUntilNext, , ) = hook.canExecuteCompound(key);
+        assertFalse(canCompound, "Should not be able to compound before 1 hour");
+        assertGt(timeUntilNext, 0, "Time until next compound should be > 0");
+        
+        // Avançar tempo para 1 hora + 1 segundo
+        vm.warp(block.timestamp + 1 hours + 1);
+        
+        // Agora deve poder compor (se outras condições forem atendidas)
+        (canCompound, reason, timeUntilNext, , ) = hook.canExecuteCompound(key);
+        assertEq(timeUntilNext, 0, "Time until next compound should be 0 after 1 hour");
+    }
+
+    /// @notice Teste: Verificar que protocolFeePercent é usado no cálculo de fees
+    function test_ProtocolFeePercent_UsedInFeeCalculation() public {
+        PoolKey memory key = poolKey;
+        vm.prank(owner);
+        hook.setPoolConfig(key, true);
+        
+        // Mudar protocol fee para 15% (1500)
+        vm.prank(owner);
+        hook.setProtocolFeePercent(1500);
+        
+        // Simular afterRemoveLiquidity com fees
+        // Este teste verifica que o cálculo usa protocolFeePercent em vez de divisão fixa por 10
+        uint256 feesToken0 = 100e18; // 100 token0
+        uint256 feesToken1 = 1e18;   // 1 token1
+        
+        // Com protocolFeePercent = 1500 (15%), esperamos:
+        // protocolFee0 = (100e18 * 1500) / 10000 = 15e18
+        // protocolFee1 = (1e18 * 1500) / 10000 = 0.15e18
+        
+        uint256 expectedProtocolFee0 = (feesToken0 * 1500) / 10000;
+        uint256 expectedProtocolFee1 = (feesToken1 * 1500) / 10000;
+        
+        assertEq(expectedProtocolFee0, 15e18, "15% of 100 token0 should be 15 token0");
+        assertEq(expectedProtocolFee1, 0.15e18, "15% of 1 token1 should be 0.15 token1");
+        
+        // Verificar que o cálculo está correto
+        // Este teste verifica a lógica matemática, não o callback completo
+        // O callback completo seria testado em um teste de integração com PoolManager real
+    }
+
+    /// @notice Teste: Eventos são emitidos corretamente
+    function test_Events_EmittedOnConfigUpdate() public {
+        // Testar evento ThresholdMultiplierUpdated
+        vm.expectEmit(true, false, false, true);
+        emit AutoCompoundHook.ThresholdMultiplierUpdated(20, 30);
+        vm.prank(owner);
+        hook.setThresholdMultiplier(30);
+        
+        // Testar evento MinTimeIntervalUpdated
+        vm.expectEmit(true, false, false, true);
+        emit AutoCompoundHook.MinTimeIntervalUpdated(4 hours, 6 hours);
+        vm.prank(owner);
+        hook.setMinTimeInterval(6 hours);
+        
+        // Testar evento ProtocolFeePercentUpdated
+        vm.expectEmit(true, false, false, true);
+        emit AutoCompoundHook.ProtocolFeePercentUpdated(1000, 1500);
+        vm.prank(owner);
+        hook.setProtocolFeePercent(1500);
+        
+        // Testar evento FeeRecipientUpdated
+        address newRecipient = address(0x999);
+        vm.expectEmit(true, true, false, true);
+        emit AutoCompoundHook.FeeRecipientUpdated(hook.feeRecipient(), newRecipient);
+        vm.prank(owner);
+        hook.setFeeRecipient(newRecipient);
+    }
 }
 

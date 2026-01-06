@@ -25,10 +25,76 @@ contract AutoCompoundHook is BaseHook {
 
     // Eventos
     event FeesCompounded(PoolId indexed poolId, uint256 amount0, uint256 amount1);
+    
+    /// @notice Emitido quando compound é executado com sucesso
+    /// @param poolId ID da pool
+    /// @param fees0 Quantidade de fees0 reinvestidas
+    /// @param fees1 Quantidade de fees1 reinvestidas
+    /// @param liquidityDelta Liquidez adicionada na pool
+    /// @param gasUsed Gas usado na transação (estimado)
+    /// @param feesValueUSD Valor total das fees em USD
+    /// @param timestamp Timestamp do compound
+    event CompoundExecuted(
+        PoolId indexed poolId,
+        uint256 fees0,
+        uint256 fees1,
+        int128 liquidityDelta,
+        uint256 gasUsed,
+        uint256 feesValueUSD,
+        uint256 timestamp
+    );
+    
+    /// @notice Emitido quando fees são acumuladas após um swap
+    /// @param poolId ID da pool
+    /// @param fees0 Fees acumuladas em token0
+    /// @param fees1 Fees acumuladas em token1
+    /// @param totalFees0 Total acumulado de fees0 até agora
+    /// @param totalFees1 Total acumulado de fees1 até agora
+    /// @param feesValueUSD Valor total das fees acumuladas em USD
+    event FeesAccumulated(
+        PoolId indexed poolId,
+        uint256 fees0,
+        uint256 fees1,
+        uint256 totalFees0,
+        uint256 totalFees1,
+        uint256 feesValueUSD
+    );
+    
+    /// @notice Emitido quando compound é preparado mas não pode ser executado
+    /// @param poolId ID da pool
+    /// @param reason Razão pela qual não pode ser executado
+    /// @param fees0 Fees disponíveis em token0
+    /// @param fees1 Fees disponíveis em token1
+    /// @param timeUntilNext Tempo até próximo compound possível (segundos)
+    event CompoundPrepared(
+        PoolId indexed poolId,
+        string reason,
+        uint256 fees0,
+        uint256 fees1,
+        uint256 timeUntilNext
+    );
+    
+    /// @notice Emitido quando tentativa de compound falha
+    /// @param poolId ID da pool
+    /// @param reason Razão da falha
+    /// @param fees0 Fees que deveriam ser reinvestidas
+    /// @param fees1 Fees que deveriam ser reinvestidas
+    event CompoundFailed(
+        PoolId indexed poolId,
+        string reason,
+        uint256 fees0,
+        uint256 fees1
+    );
+    
     event PoolConfigUpdated(PoolId indexed poolId, bool enabled);
     event TokenPricesUpdated(PoolId indexed poolId, uint256 price0USD, uint256 price1USD);
     event PoolTickRangeUpdated(PoolId indexed poolId, int24 tickLower, int24 tickUpper);
     event OwnerUpdated(address indexed oldOwner, address indexed newOwner);
+    event ThresholdMultiplierUpdated(uint256 oldValue, uint256 newValue);
+    event MinTimeIntervalUpdated(uint256 oldValue, uint256 newValue);
+    event ProtocolFeePercentUpdated(uint256 oldValue, uint256 newValue);
+    event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
+    event ProtocolFeesWithdrawn(address indexed recipient, uint128 amount0, uint128 amount1);
 
     // Configurações por pool
     struct PoolConfig {
@@ -41,11 +107,20 @@ contract AutoCompoundHook is BaseHook {
     // Mapeamento para rastrear taxas acumuladas
     mapping(PoolId => uint256) public accumulatedFees0;
     mapping(PoolId => uint256) public accumulatedFees1;
+    
+    // Protocol fees acumuladas (10% das fees geradas)
+    uint128 public protocolFeeToken0;
+    uint128 public protocolFeeToken1;
 
     // Mapeamento para rastrear posições de liquidez (tick ranges) por pool
     // Isso ajuda a saber onde adicionar a liquidez no compound
     mapping(PoolId => int24) public poolTickLower;
     mapping(PoolId => int24) public poolTickUpper;
+    
+    // Ticks iniciais da pool (usados para compound manter a mesma distribuição)
+    mapping(PoolId => int24) public initialTickLower;
+    mapping(PoolId => int24) public initialTickUpper;
+    mapping(PoolId => bool) public hasInitialTicks;
 
     // Mapeamento para último timestamp de compound por pool
     mapping(PoolId => uint256) public lastCompoundTimestamp;
@@ -61,14 +136,13 @@ contract AutoCompoundHook is BaseHook {
     // Mapeamento para verificar se uma pool intermediária foi configurada
     mapping(Currency => bool) public hasIntermediatePool;
 
-    // Constante: intervalo de 4 horas em segundos
-    uint256 public constant COMPOUND_INTERVAL = 4 hours; // 14400 segundos
-
-    // Constante: multiplicador mínimo de fees vs custo de gas (20x)
-    uint256 public constant MIN_FEES_MULTIPLIER = 20;
-
-    // Endereço para receber 10% das fees
-    address public constant FEE_RECIPIENT = 0xd9D3e3C7dc4F5d058ff24C0b71cF68846316F65c;
+    // Configurações globais (configuráveis pelo owner)
+    uint256 public thresholdMultiplier = 20; // 20x o custo de gas
+    uint256 public minTimeBetweenCompounds = 4 hours; // 14400 segundos
+    uint256 public protocolFeePercent = 1000; // 10% = 1000 (base 10000)
+    
+    // Endereço para receber protocol fees
+    address public feeRecipient = 0xd9D3e3C7dc4F5d058ff24C0b71cF68846316F65c;
     
     /// @notice Retorna o endereço do USDC baseado na rede atual
     /// @dev Endereços USDC por rede (atualizado 26/12/2025)
@@ -339,6 +413,20 @@ contract AutoCompoundHook is BaseHook {
         if (fee0 > 0 || fee1 > 0) {
             accumulatedFees0[poolId] += fee0;
             accumulatedFees1[poolId] += fee1;
+            
+            // Emitir evento de fees acumuladas
+            uint256 totalFees0 = accumulatedFees0[poolId];
+            uint256 totalFees1 = accumulatedFees1[poolId];
+            uint256 feesValueUSD = _calculateFeesValueUSD(poolId, totalFees0, totalFees1);
+            
+            emit FeesAccumulated(
+                poolId,
+                fee0,
+                fee1,
+                totalFees0,
+                totalFees1,
+                feesValueUSD
+            );
         }
         
         // Não fazer compound aqui para evitar gas alto
@@ -347,6 +435,8 @@ contract AutoCompoundHook is BaseHook {
     }
 
     /// @notice Callback após adicionar liquidez
+    /// @dev Captura automaticamente os ticks iniciais da primeira adição de liquidez
+    ///      para que o compound use o mesmo range
     function _afterAddLiquidity(
         address,
         PoolKey calldata key,
@@ -357,8 +447,14 @@ contract AutoCompoundHook is BaseHook {
     ) internal override returns (bytes4, BalanceDelta) {
         PoolId poolId = key.toId();
         
-        // Salvar o tick range se ainda não foi configurado
-        if (poolTickLower[poolId] == 0 && poolTickUpper[poolId] == 0) {
+        // Se ainda não tem ticks iniciais configurados, salvar os ticks da primeira adição de liquidez
+        // Isso garante que o compound use o mesmo range da criação inicial da pool
+        if (!hasInitialTicks[poolId]) {
+            initialTickLower[poolId] = params.tickLower;
+            initialTickUpper[poolId] = params.tickUpper;
+            hasInitialTicks[poolId] = true;
+            
+            // Também atualizar poolTickRange para usar os ticks iniciais
             poolTickLower[poolId] = params.tickLower;
             poolTickUpper[poolId] = params.tickUpper;
         }
@@ -392,16 +488,16 @@ contract AutoCompoundHook is BaseHook {
 
         // Verificar se há fees positivas
         if (fees0 > 0 || fees1 > 0) {
-            // Calcular 10% das fees
-            uint256 tenPercent0 = uint256(uint128(fees0)) / 10;
-            uint256 tenPercent1 = uint256(uint128(fees1)) / 10;
+            // Calcular protocol fee percent das fees (base 10000)
+            uint256 protocolFee0 = (uint256(uint128(fees0)) * protocolFeePercent) / 10000;
+            uint256 protocolFee1 = (uint256(uint128(fees1)) * protocolFeePercent) / 10000;
 
             // Pegar os tokens do pool manager
-            if (tenPercent0 > 0) {
-                poolManager.take(key.currency0, address(this), tenPercent0);
+            if (protocolFee0 > 0) {
+                poolManager.take(key.currency0, address(this), protocolFee0);
             }
-            if (tenPercent1 > 0) {
-                poolManager.take(key.currency1, address(this), tenPercent1);
+            if (protocolFee1 > 0) {
+                poolManager.take(key.currency1, address(this), protocolFee1);
             }
 
             // Fazer swap para USDC se necessário
@@ -410,19 +506,19 @@ contract AutoCompoundHook is BaseHook {
             bool currency1IsUSDC = key.currency1 == usdcCurrency;
 
             // Se token0 não é USDC, fazer swap
-            if (tenPercent0 > 0 && !currency0IsUSDC) {
-                _swapToUSDC(key, key.currency0, tenPercent0);
+            if (protocolFee0 > 0 && !currency0IsUSDC) {
+                _swapToUSDC(key, key.currency0, protocolFee0);
             }
 
             // Se token1 não é USDC, fazer swap
-            if (tenPercent1 > 0 && !currency1IsUSDC) {
-                _swapToUSDC(key, key.currency1, tenPercent1);
+            if (protocolFee1 > 0 && !currency1IsUSDC) {
+                _swapToUSDC(key, key.currency1, protocolFee1);
             }
 
-            // Transferir todo USDC acumulado para FEE_RECIPIENT
+            // Transferir todo USDC acumulado para feeRecipient
             uint256 usdcBalance = IERC20(USDC()).balanceOf(address(this));
             if (usdcBalance > 0) {
-                IERC20(USDC()).transfer(FEE_RECIPIENT, usdcBalance);
+                IERC20(USDC()).transfer(feeRecipient, usdcBalance);
             }
         }
 
@@ -535,9 +631,9 @@ contract AutoCompoundHook is BaseHook {
             return (false, params, 0, 0);
         }
 
-        // Verificar se passaram 4 horas desde o último compound
+        // Verificar se passou o intervalo mínimo desde o último compound
         uint256 lastCompound = lastCompoundTimestamp[poolId];
-        if (lastCompound > 0 && block.timestamp < lastCompound + COMPOUND_INTERVAL) {
+        if (lastCompound > 0 && block.timestamp < lastCompound + minTimeBetweenCompounds) {
             return (false, params, 0, 0);
         }
 
@@ -555,23 +651,33 @@ contract AutoCompoundHook is BaseHook {
         // Calcular valor total das fees acumuladas em USD
         uint256 feesValueUSD = _calculateFeesValueUSD(poolId, fees0, fees1);
         
-        // Verificar se fees acumuladas são >= 20x o custo de gas
+        // Verificar se fees acumuladas são >= thresholdMultiplier x o custo de gas
         // Se feesValueUSD for 0 (preços não configurados), permitir compound
         // Se gasCostUSD for 0, permitir compound
         if (gasCostUSD > 0 && feesValueUSD > 0) {
             // Verificar overflow na multiplicação
             uint256 minRequired;
             unchecked {
-                minRequired = gasCostUSD * MIN_FEES_MULTIPLIER;
+                minRequired = gasCostUSD * thresholdMultiplier;
                 // Se não houve overflow e feesValueUSD é menor que o mínimo, não pode compound
-                if (minRequired / MIN_FEES_MULTIPLIER == gasCostUSD && feesValueUSD < minRequired) {
+                if (minRequired / thresholdMultiplier == gasCostUSD && feesValueUSD < minRequired) {
                     return (false, params, fees0, fees1);
                 }
             }
         }
 
-        int24 tickLower = poolTickLower[poolId];
-        int24 tickUpper = poolTickUpper[poolId];
+        // Usar ticks iniciais se configurados, senão usar ticks da pool
+        int24 tickLower;
+        int24 tickUpper;
+        if (hasInitialTicks[poolId]) {
+            // Usar ticks iniciais para manter a mesma distribuição da criação da pool
+            tickLower = initialTickLower[poolId];
+            tickUpper = initialTickUpper[poolId];
+        } else {
+            // Fallback para ticks configurados manualmente
+            tickLower = poolTickLower[poolId];
+            tickUpper = poolTickUpper[poolId];
+        }
         
         // Verificar se temos um tick range configurado
         if (tickLower == 0 && tickUpper == 0) {
@@ -607,21 +713,95 @@ contract AutoCompoundHook is BaseHook {
     /// @dev Esta função deve ser chamada APENAS dentro de um unlock callback
     /// @dev A verificação de msg.sender foi removida porque o CompoundHelper só pode chamar
     ///      esta função dentro do unlockCallback, que só pode ser chamado pelo PoolManager
+    /// @dev Separa 10% das fees para protocol fees, converte para USDC e envia automaticamente para feeRecipient
+    /// @dev Faz compound apenas com 90% restantes
     /// @param key A chave da pool
-    /// @param fees0 Amount de fees0 que serão reinvestidas
-    /// @param fees1 Amount de fees1 que serão reinvestidas
+    /// @param fees0 Amount de fees0 que serão reinvestidas (antes de separar protocol fee)
+    /// @param fees1 Amount de fees1 que serão reinvestidas (antes de separar protocol fee)
     function executeCompound(PoolKey calldata key, uint256 fees0, uint256 fees1) external {
         // No need to check msg.sender because this can only be called from CompoundHelper
         // which only runs during unlockCallback (which only PoolManager can call)
         
         PoolId poolId = key.toId();
         
+        // Separar 10% das fees para protocol fees
+        uint256 protocolFee0 = (fees0 * protocolFeePercent) / 10000;
+        uint256 protocolFee1 = (fees1 * protocolFeePercent) / 10000;
+        
+        // Se houver protocol fees, processar e enviar automaticamente
+        if (protocolFee0 > 0 || protocolFee1 > 0) {
+            // Pegar os tokens do poolManager
+            if (protocolFee0 > 0) {
+                poolManager.take(key.currency0, address(this), protocolFee0);
+            }
+            if (protocolFee1 > 0) {
+                poolManager.take(key.currency1, address(this), protocolFee1);
+            }
+            
+            // Fazer swap para USDC se necessário
+            Currency usdcCurrency = Currency.wrap(USDC());
+            bool currency0IsUSDC = key.currency0 == usdcCurrency;
+            bool currency1IsUSDC = key.currency1 == usdcCurrency;
+            
+            // Se token0 não é USDC, fazer swap
+            if (protocolFee0 > 0 && !currency0IsUSDC) {
+                _swapToUSDC(key, key.currency0, protocolFee0);
+            }
+            
+            // Se token1 não é USDC, fazer swap
+            if (protocolFee1 > 0 && !currency1IsUSDC) {
+                _swapToUSDC(key, key.currency1, protocolFee1);
+            }
+            
+            // Transferir todo USDC acumulado para feeRecipient automaticamente
+            uint256 usdcBalance = IERC20(USDC()).balanceOf(address(this));
+            if (usdcBalance > 0) {
+                IERC20(USDC()).transfer(feeRecipient, usdcBalance);
+            }
+        }
+        
+        // Calcular fees que serão reinvestidas (90%)
+        uint256 compoundFees0 = fees0 - protocolFee0;
+        uint256 compoundFees1 = fees1 - protocolFee1;
+        
+        // Calcular informações antes de resetar
+        uint256 feesValueUSD = _calculateFeesValueUSD(poolId, compoundFees0, compoundFees1);
+        
+        // Calcular liquidityDelta que será adicionado (apenas com os 90%)
+        // Usar ticks iniciais se configurados, senão usar ticks da pool
+        int24 tickLower;
+        int24 tickUpper;
+        if (hasInitialTicks[poolId]) {
+            // Usar ticks iniciais para manter a mesma distribuição da criação da pool
+            tickLower = initialTickLower[poolId];
+            tickUpper = initialTickUpper[poolId];
+        } else {
+            // Fallback para ticks configurados manualmente
+            tickLower = poolTickLower[poolId];
+            tickUpper = poolTickUpper[poolId];
+        }
+        int128 liquidityDelta = _calculateLiquidityFromAmounts(key, tickLower, tickUpper, compoundFees0, compoundFees1);
+        
+        // Estimativa de gas usado (baseada em execuções típicas)
+        // O gas real será calculado pelo keeper/frontend baseado na transação
+        uint256 estimatedGasUsed = 200000; // Estimativa típica para compound
+        
         // Resetar taxas acumuladas e atualizar timestamp
         accumulatedFees0[poolId] = 0;
         accumulatedFees1[poolId] = 0;
         lastCompoundTimestamp[poolId] = block.timestamp;
         
-        emit FeesCompounded(poolId, fees0, fees1);
+        // Emitir eventos detalhados (usando fees que foram reinvestidas, não as totais)
+        emit FeesCompounded(poolId, compoundFees0, compoundFees1);
+        emit CompoundExecuted(
+            poolId,
+            compoundFees0,
+            compoundFees1,
+            liquidityDelta,
+            estimatedGasUsed,
+            feesValueUSD,
+            block.timestamp
+        );
     }
 
     /// @notice Função interna para fazer compound (mantida para compatibilidade)
@@ -852,6 +1032,85 @@ contract AutoCompoundHook is BaseHook {
         emit OwnerUpdated(oldOwner, newOwner);
     }
 
+    /// @notice Atualiza o multiplicador de threshold para compound
+    /// @param _new Novo valor do multiplicador (ex: 20 = 20x o custo de gas)
+    function setThresholdMultiplier(uint256 _new) external onlyOwner {
+        require(_new > 0, "Threshold multiplier must be > 0");
+        uint256 oldValue = thresholdMultiplier;
+        thresholdMultiplier = _new;
+        emit ThresholdMultiplierUpdated(oldValue, _new);
+    }
+
+    /// @notice Atualiza o intervalo mínimo entre compounds
+    /// @param _new Novo intervalo em segundos (ex: 14400 = 4 horas)
+    function setMinTimeInterval(uint256 _new) external onlyOwner {
+        require(_new > 0, "Time interval must be > 0");
+        uint256 oldValue = minTimeBetweenCompounds;
+        minTimeBetweenCompounds = _new;
+        emit MinTimeIntervalUpdated(oldValue, _new);
+    }
+
+    /// @notice Atualiza a porcentagem de protocol fee
+    /// @param _new Novo valor em base 10000 (ex: 1000 = 10%, máximo 5000 = 50%)
+    function setProtocolFeePercent(uint256 _new) external onlyOwner {
+        require(_new <= 5000, "Protocol fee percent must be <= 50% (5000)");
+        uint256 oldValue = protocolFeePercent;
+        protocolFeePercent = _new;
+        emit ProtocolFeePercentUpdated(oldValue, _new);
+    }
+
+    /// @notice Atualiza o endereço que recebe protocol fees
+    /// @param _new Novo endereço do fee recipient
+    function setFeeRecipient(address _new) external onlyOwner {
+        require(_new != address(0), "Fee recipient cannot be zero address");
+        address oldRecipient = feeRecipient;
+        feeRecipient = _new;
+        emit FeeRecipientUpdated(oldRecipient, _new);
+    }
+
+    /// @notice Retira as protocol fees acumuladas
+    /// @dev Converte todas as protocol fees para USDC e envia para o fee recipient
+    /// @param key A chave da pool (necessária para identificar os tokens e fazer swaps)
+    function withdrawProtocolFees(PoolKey calldata key) external onlyOwner {
+        uint128 amount0 = protocolFeeToken0;
+        uint128 amount1 = protocolFeeToken1;
+        
+        // Resetar acumuladores
+        protocolFeeToken0 = 0;
+        protocolFeeToken1 = 0;
+        
+        // Pegar os tokens do poolManager
+        if (amount0 > 0) {
+            poolManager.take(key.currency0, address(this), amount0);
+        }
+        if (amount1 > 0) {
+            poolManager.take(key.currency1, address(this), amount1);
+        }
+        
+        // Fazer swap para USDC se necessário
+        Currency usdcCurrency = Currency.wrap(USDC());
+        bool currency0IsUSDC = key.currency0 == usdcCurrency;
+        bool currency1IsUSDC = key.currency1 == usdcCurrency;
+        
+        // Se token0 não é USDC, fazer swap
+        if (amount0 > 0 && !currency0IsUSDC) {
+            _swapToUSDC(key, key.currency0, amount0);
+        }
+        
+        // Se token1 não é USDC, fazer swap
+        if (amount1 > 0 && !currency1IsUSDC) {
+            _swapToUSDC(key, key.currency1, amount1);
+        }
+        
+        // Transferir todo USDC acumulado para feeRecipient
+        uint256 usdcBalance = IERC20(USDC()).balanceOf(address(this));
+        if (usdcBalance > 0) {
+            IERC20(USDC()).transfer(feeRecipient, usdcBalance);
+        }
+        
+        emit ProtocolFeesWithdrawn(feeRecipient, uint128(usdcBalance), 0);
+    }
+
     /// @notice Função de emergência para retirar tokens acumulados
     /// @dev Apenas o owner pode chamar
     /// @dev Transfere os tokens reais do hook para o destinatário
@@ -968,13 +1227,13 @@ contract AutoCompoundHook is BaseHook {
             return (false, "No accumulated fees", 0, 0, 0);
         }
 
-        // Verificar intervalo de 4 horas
+        // Verificar intervalo mínimo
         uint256 lastCompound = lastCompoundTimestamp[poolId];
         if (lastCompound > 0) {
             uint256 timeElapsed = block.timestamp - lastCompound;
-            if (timeElapsed < COMPOUND_INTERVAL) {
-                timeUntilNextCompound = COMPOUND_INTERVAL - timeElapsed;
-                return (false, "4 hours not elapsed", timeUntilNextCompound, 0, 0);
+            if (timeElapsed < minTimeBetweenCompounds) {
+                timeUntilNextCompound = minTimeBetweenCompounds - timeElapsed;
+                return (false, "Minimum time interval not elapsed", timeUntilNextCompound, 0, 0);
             }
         }
 
@@ -986,9 +1245,9 @@ contract AutoCompoundHook is BaseHook {
             return (false, "Token prices not configured", 0, 0, gasCostUSD);
         }
 
-        // Verificar se fees >= 20x custo de gas (calculado automaticamente)
-        if (feesValueUSD < gasCostUSD * MIN_FEES_MULTIPLIER) {
-            return (false, "Fees less than 20x gas cost", 0, feesValueUSD, gasCostUSD);
+        // Verificar se fees >= thresholdMultiplier x custo de gas (calculado automaticamente)
+        if (feesValueUSD < gasCostUSD * thresholdMultiplier) {
+            return (false, "Fees less than threshold multiplier x gas cost", 0, feesValueUSD, gasCostUSD);
         }
 
         return (true, "", 0, feesValueUSD, gasCostUSD);

@@ -9,16 +9,24 @@ O keeper verifica periodicamente se pode executar compound e, se as condições 
 ### Condições para Compound
 
 1. Pool habilitada
-2. 4 horas desde o último compound (ou nunca houve compound)
+2. Intervalo mínimo configurado passou desde o último compound (configurável via `minTimeBetweenCompounds`, padrão: 4 horas)
 3. Fees acumuladas > 0
-4. Fees value >= 20x gas cost (ou preços não configurados)
+4. Fees value >= thresholdMultiplier x gas cost (configurável via `thresholdMultiplier`, padrão: 20x)
 5. Tick range configurado
 6. Liquidity delta > 0
 
+**Nota v2**: Os valores de threshold e intervalo são configuráveis pelo owner do hook:
+- `thresholdMultiplier`: Multiplicador mínimo de fees vs gas (padrão: 20)
+- `minTimeBetweenCompounds`: Intervalo mínimo em segundos (padrão: 14400 = 4 horas)
+
 ## Execução Manual
 
-Para executar o keeper manualmente:
+### Windows (PowerShell)
+```powershell
+.\executar-keeper-compound.ps1
+```
 
+### Linux/Mac (Bash)
 ```bash
 bash executar-keeper-compound.sh
 ```

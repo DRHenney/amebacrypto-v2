@@ -35,11 +35,12 @@ contract AutoCompoundKeeper is Script {
         Currency currency0 = Currency.wrap(token0Address < token1Address ? token0Address : token1Address);
         Currency currency1 = Currency.wrap(token0Address < token1Address ? token1Address : token0Address);
         
-        PoolKey memory poolKey = PoolKey({
+        PoolKey memory         // Pool v2 com novo hook usa fee 10000 (1.0%)
+        poolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 30000, // 3%
-            tickSpacing: 600,
+            fee: 10000, // 1.0% (pool v2 com novo hook)
+            tickSpacing: 60,
             hooks: IHooks(hookAddress)
         });
         
@@ -56,8 +57,16 @@ contract AutoCompoundKeeper is Script {
         (bool canCompound, string memory reason, uint256 timeUntilNext, uint256 feesValueUSD, uint256 gasCostUSD) = 
             hook.canExecuteCompound(poolKey);
         
+        // Get current hook configuration (v2)
+        uint256 thresholdMultiplier = hook.thresholdMultiplier();
+        uint256 minTimeInterval = hook.minTimeBetweenCompounds();
+        
         console2.log("=== Compound Check ===");
         console2.log("Can Execute Compound:", canCompound);
+        console2.log("Hook Configuration (v2):");
+        console2.log("  Threshold Multiplier:", thresholdMultiplier, "x");
+        console2.log("  Min Time Interval:", minTimeInterval, "seconds");
+        console2.log("  Min Time Interval:", minTimeInterval / 3600, "hours");
         if (!canCompound) {
             console2.log("Reason:", reason);
             if (timeUntilNext > 0) {
@@ -67,6 +76,7 @@ contract AutoCompoundKeeper is Script {
             }
             console2.log("Fees Value (USD):", feesValueUSD / 1e18);
             console2.log("Gas Cost (USD):", gasCostUSD / 1e18);
+            console2.log("Required (threshold * gas):", (gasCostUSD * thresholdMultiplier) / 1e18);
             console2.log("");
             console2.log("Compound nao pode ser executado no momento.");
             vm.stopBroadcast();
@@ -75,6 +85,7 @@ contract AutoCompoundKeeper is Script {
         
         console2.log("Fees Value (USD):", feesValueUSD / 1e18);
         console2.log("Gas Cost (USD):", gasCostUSD / 1e18);
+        console2.log("Required (threshold * gas):", (gasCostUSD * thresholdMultiplier) / 1e18);
         console2.log("");
         
         // Step 2: Prepare compound
@@ -86,9 +97,9 @@ contract AutoCompoundKeeper is Script {
             console2.log("Compound nao pode ser preparado.");
             console2.log("Todas as condicoes devem ser atendidas:");
             console2.log("1. Pool habilitada");
-            console2.log("2. 4 horas desde o ultimo compound");
+            console2.log("2. Min time interval passou (configurado:", minTimeInterval, "seconds)");
             console2.log("3. Fees acumuladas > 0");
-            console2.log("4. Fees value >= 20x gas cost (ou precos nao configurados)");
+            console2.log("4. Fees value >= threshold * gas cost (threshold:", thresholdMultiplier, "x)");
             console2.log("5. Tick range configurado");
             console2.log("6. Liquidity delta > 0");
             vm.stopBroadcast();
@@ -166,7 +177,7 @@ contract AutoCompoundKeeper is Script {
         
         console2.log("");
         console2.log("=== Keeper Execution Complete ===");
-        console2.log("Next check should be in 4 hours (or when fees accumulate)");
+        console2.log("Next check should be in", minTimeInterval / 3600, "hours (or when fees accumulate)");
     }
 }
 

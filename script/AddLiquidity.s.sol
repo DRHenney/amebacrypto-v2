@@ -40,23 +40,39 @@ contract AddLiquidity is Script {
         Currency currency0 = Currency.wrap(token0Address < token1Address ? token0Address : token1Address);
         Currency currency1 = Currency.wrap(token0Address < token1Address ? token1Address : token0Address);
         
+        // Usar fee 10000 (1.0%) para pool v2 com novo hook
         poolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 3000, // 0.3%
+            fee: 10000, // 1.0% (pool v2 com novo hook)
             tickSpacing: 60,
             hooks: IHooks(hookAddress)
         });
         
         // Get current pool price
-        (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(poolKey.toId());
+        PoolId poolId = poolKey.toId();
+        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
         int24 currentTick = TickMath.getTickAtSqrtPrice(sqrtPriceX96);
         
-        // Set tick range around current price (full range)
+        // Set tick range around current price
         // Ticks must be aligned with tickSpacing (60)
         int24 tickSpacing = 60;
-        int24 tickLower = TickMath.minUsableTick(tickSpacing);
-        int24 tickUpper = TickMath.maxUsableTick(tickSpacing);
+        
+        // Use a narrow range around current price (10 ticks = ~0.1% price range)
+        // This allows small amounts to generate liquidity
+        // Calculate ticks aligned with tickSpacing
+        int24 tickLower = ((currentTick / tickSpacing) - 10) * tickSpacing;
+        int24 tickUpper = ((currentTick / tickSpacing) + 10) * tickSpacing;
+        
+        // Ensure ticks are within bounds
+        int24 minTick = TickMath.minUsableTick(tickSpacing);
+        int24 maxTick = TickMath.maxUsableTick(tickSpacing);
+        if (tickLower < minTick) tickLower = minTick;
+        if (tickUpper > maxTick) tickUpper = maxTick;
+        
+        console2.log("Current Tick:", currentTick);
+        console2.log("Tick Lower:", tickLower);
+        console2.log("Tick Upper:", tickUpper);
         
         // Calculate liquidity from amounts
         uint128 liquidity = LiquidityAmounts.getLiquidityForAmounts(
@@ -66,6 +82,48 @@ contract AddLiquidity is Script {
             token0Amount,
             token1Amount
         );
+        
+        console2.log("Calculated Liquidity:", liquidity);
+        
+        // If liquidity is still 0, use full range as fallback
+        if (liquidity == 0) {
+            console2.log("Liquidity is 0, trying full range...");
+            tickLower = minTick;
+            tickUpper = maxTick;
+            liquidity = LiquidityAmounts.getLiquidityForAmounts(
+                sqrtPriceX96,
+                TickMath.getSqrtPriceAtTick(tickLower),
+                TickMath.getSqrtPriceAtTick(tickUpper),
+                token0Amount,
+                token1Amount
+            );
+            console2.log("Full range Liquidity:", liquidity);
+        }
+        
+        // If still 0, try calculating with only the token that's closer to current price
+        // At high prices (high tick), we need more token1 (WETH)
+        if (liquidity == 0 && currentTick > 0) {
+            // Use only token1 (WETH) for liquidity at high prices
+            liquidity = LiquidityAmounts.getLiquidityForAmount1(
+                TickMath.getSqrtPriceAtTick(tickLower),
+                TickMath.getSqrtPriceAtTick(tickUpper),
+                token1Amount
+            );
+            console2.log("Token1-only Liquidity:", liquidity);
+        }
+        
+        // If still 0, try with only token0
+        if (liquidity == 0) {
+            liquidity = LiquidityAmounts.getLiquidityForAmount0(
+                TickMath.getSqrtPriceAtTick(tickLower),
+                TickMath.getSqrtPriceAtTick(tickUpper),
+                token0Amount
+            );
+            console2.log("Token0-only Liquidity:", liquidity);
+        }
+        
+        // If still 0, require minimum liquidity
+        require(liquidity > 0, "Liquidity calculation resulted in 0");
         
         console2.log("=== Adding Liquidity ===");
         console2.log("PoolManager:", address(poolManager));
