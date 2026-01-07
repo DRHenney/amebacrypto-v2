@@ -8,22 +8,18 @@ import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
 import {ModifyLiquidityParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
-import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
-import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
+import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {LiquidityHelper} from "../src/helpers/LiquidityHelper.sol";
-import {AutoCompoundHook} from "../src/hooks/AutoCompoundHook.sol";
-import {IERC20Minimal} from "@uniswap/v4-core/src/interfaces/external/IERC20Minimal.sol";
 
-/// @notice Script to remove liquidity and test 10% fee payment
+/// @notice Script to remove all liquidity from a pool
 contract RemoveLiquidity is Script {
-    using StateLibrary for IPoolManager;
     using PoolIdLibrary for PoolKey;
+    using StateLibrary for IPoolManager;
     
     IPoolManager public poolManager;
-    AutoCompoundHook public hook;
     PoolKey public poolKey;
-    PoolId public poolId;
+    LiquidityHelper public helper;
     
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
@@ -33,77 +29,94 @@ contract RemoveLiquidity is Script {
         address token1Address = vm.envAddress("TOKEN1_ADDRESS");
         
         poolManager = IPoolManager(poolManagerAddress);
-        hook = AutoCompoundHook(hookAddress);
         
-        // Create PoolKey
+        // Create PoolKey (tokens must be in ascending order)
         Currency currency0 = Currency.wrap(token0Address < token1Address ? token0Address : token1Address);
         Currency currency1 = Currency.wrap(token0Address < token1Address ? token1Address : token0Address);
         
         poolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 3000,
+            fee: 3000, // 0.3% (pool existente)
             tickSpacing: 60,
             hooks: IHooks(hookAddress)
         });
-        poolId = poolKey.toId();
+        
+        PoolId poolId = poolKey.toId();
+        
+        address deployer = vm.addr(deployerPrivateKey);
+        
+        console2.log("=== Removendo Liquidez da Pool ===");
+        console2.log("Pool ID:", vm.toString(uint256(PoolId.unwrap(poolId))));
+        console2.log("Deployer:", deployer);
+        console2.log("");
+        
+        // Get current pool state
+        (uint160 sqrtPriceX96, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+        uint128 currentLiquidity = poolManager.getLiquidity(poolId);
+        
+        console2.log("Current Liquidity:", currentLiquidity);
+        console2.log("Current Tick:", currentTick);
+        console2.log("");
+        
+        if (currentLiquidity == 0) {
+            console2.log("[AVISO] Pool nao tem liquidez para remover!");
+            return;
+        }
         
         vm.startBroadcast(deployerPrivateKey);
         
-        console2.log("=== Removing Liquidity ===");
-        console2.log("PoolManager:", poolManagerAddress);
-        console2.log("Hook:", hookAddress);
-        console2.log("Pool ID:", vm.toString(uint256(PoolId.unwrap(poolId))));
+        // Deploy helper if needed (or reuse existing)
+        // For simplicity, deploy a new one
+        helper = new LiquidityHelper(poolManager);
+        console2.log("LiquidityHelper deployed at:", address(helper));
+        console2.log("");
         
-        // Get current pool state
-        (uint160 sqrtPriceX96, int24 currentTick,,) = poolManager.getSlot0(poolId);
-        uint128 currentLiquidity = poolManager.getLiquidity(poolId);
+        // Get initial ticks from hook (if available)
+        // We'll use a wide range to remove all liquidity
+        // First, try to get the initial ticks from the hook
+        address hookAddr = hookAddress;
+        (bool success, bytes memory data) = hookAddr.staticcall(
+            abi.encodeWithSignature("initialTickLower(bytes32)", PoolId.unwrap(poolId))
+        );
         
-        console2.log("Current SqrtPriceX96:", sqrtPriceX96);
-        console2.log("Current Tick:", currentTick);
-        console2.log("Current Liquidity:", currentLiquidity);
+        int24 tickLower;
+        int24 tickUpper;
         
-        // Get tick range from hook config
-        (,,, int24 tickLower, int24 tickUpper) = hook.getPoolInfo(poolKey);
-        console2.log("Tick Lower:", tickLower);
-        console2.log("Tick Upper:", tickUpper);
-        
-        // Check FEE_RECIPIENT address
-        address feeRecipient = hook.FEE_RECIPIENT();
-        console2.log("FEE_RECIPIENT:", feeRecipient);
-        
-        // Get balances before
-        address token0 = Currency.unwrap(poolKey.currency0);
-        address token1 = Currency.unwrap(poolKey.currency1);
-        
-        uint256 feeRecipientBalance0Before = IERC20Minimal(token0).balanceOf(feeRecipient);
-        uint256 feeRecipientBalance1Before = IERC20Minimal(token1).balanceOf(feeRecipient);
-        
-        console2.log("\n=== Balances Before Removal ===");
-        console2.log("FEE_RECIPIENT Token0 Balance:", feeRecipientBalance0Before);
-        console2.log("FEE_RECIPIENT Token1 Balance:", feeRecipientBalance1Before);
-        
-        // Remove 50% of liquidity (negative delta)
-        // We'll remove half of current liquidity
-        // Use int256 as ModifyLiquidityParams expects int256 (converted to int128 internally)
-        int256 liquidityDelta = -int256(uint256(currentLiquidity)) / 2;
-        
-        console2.log("\n=== Removing Liquidity ===");
-        console2.log("Liquidity Delta (to remove):", liquidityDelta);
-        
-        // Deploy helper contract
-        LiquidityHelper helper = new LiquidityHelper(poolManager);
-        console2.log("Helper deployed at:", address(helper));
-        
-        // Approve helper to spend tokens (might not be needed for removal, but to be safe)
-        if (token0 != address(0)) {
-            IERC20Minimal(token0).approve(address(helper), type(uint256).max);
-        }
-        if (token1 != address(0)) {
-            IERC20Minimal(token1).approve(address(helper), type(uint256).max);
+        if (success && data.length > 0) {
+            tickLower = abi.decode(data, (int24));
+            console2.log("Initial Tick Lower:", tickLower);
+            
+            (success, data) = hookAddr.staticcall(
+                abi.encodeWithSignature("initialTickUpper(bytes32)", PoolId.unwrap(poolId))
+            );
+            if (success && data.length > 0) {
+                tickUpper = abi.decode(data, (int24));
+                console2.log("Initial Tick Upper:", tickUpper);
+            }
         }
         
-        // Prepare modify liquidity params (negative delta = remove)
+        // If we don't have initial ticks, use a very wide range around current tick
+        if (tickLower == 0 && tickUpper == 0) {
+            console2.log("[AVISO] Ticks iniciais nao encontrados, usando range amplo");
+            // Use a very wide range to capture all liquidity
+            tickLower = currentTick - 1000000; // Very wide range
+            tickUpper = currentTick + 1000000;
+        }
+        
+        console2.log("Using Tick Range:");
+        console2.log("  Tick Lower:", tickLower);
+        console2.log("  Tick Upper:", tickUpper);
+        console2.log("");
+        
+        // Remove all liquidity (negative liquidityDelta)
+        // Convert uint128 to int128 negative
+        int128 liquidityDelta = -int128(currentLiquidity);
+        
+        console2.log("Removing Liquidity:");
+        console2.log("  Liquidity Delta:", uint128(-liquidityDelta));
+        console2.log("");
+        
         ModifyLiquidityParams memory params = ModifyLiquidityParams({
             tickLower: tickLower,
             tickUpper: tickUpper,
@@ -111,54 +124,37 @@ contract RemoveLiquidity is Script {
             salt: bytes32(0)
         });
         
-        bytes memory hookData = "";
-        
-        // Remove liquidity via helper
-        // This will trigger afterRemoveLiquidity callback which should pay 10% to FEE_RECIPIENT
-        BalanceDelta delta = helper.removeLiquidity(poolKey, params, hookData);
-        
-        console2.log("\n=== Liquidity Removal Result ===");
-        console2.log("Delta Amount0:", delta.amount0());
-        console2.log("Delta Amount1:", delta.amount1());
-        
-        // Get balances after
-        uint256 feeRecipientBalance0After = IERC20Minimal(token0).balanceOf(feeRecipient);
-        uint256 feeRecipientBalance1After = IERC20Minimal(token1).balanceOf(feeRecipient);
-        
-        console2.log("\n=== Balances After Removal ===");
-        console2.log("FEE_RECIPIENT Token0 Balance:", feeRecipientBalance0After);
-        console2.log("FEE_RECIPIENT Token1 Balance:", feeRecipientBalance1After);
-        console2.log("Token0 Received:", feeRecipientBalance0After - feeRecipientBalance0Before);
-        console2.log("Token1 Received:", feeRecipientBalance1After - feeRecipientBalance1Before);
-        
-        // Since fees are swapped to USDC, check USDC balance
-        address usdcAddress = hook.USDC();
-        uint256 usdcBalanceBefore = IERC20Minimal(usdcAddress).balanceOf(feeRecipient);
-        console2.log("\n=== USDC Balance (FEE_RECIPIENT) ===");
-        console2.log("USDC Address:", usdcAddress);
-        console2.log("USDC Balance:", usdcBalanceBefore);
-        
-        // Get pool state after
-        (uint160 sqrtPriceX96After, int24 tickAfter,,) = poolManager.getSlot0(poolId);
-        uint128 liquidityAfter = poolManager.getLiquidity(poolId);
-        
-        console2.log("\n=== Pool State After ===");
-        console2.log("SqrtPriceX96:", sqrtPriceX96After);
-        console2.log("Tick:", tickAfter);
-        console2.log("Liquidity:", liquidityAfter);
-        console2.log("Liquidity Removed:", currentLiquidity - liquidityAfter);
-        
-        console2.log("\n=== Test Complete ===");
-        if (feeRecipientBalance0After > feeRecipientBalance0Before || 
-            feeRecipientBalance1After > feeRecipientBalance1Before ||
-            usdcBalanceBefore > 0) {
-            console2.log("SUCCESS: FEE_RECIPIENT received payment!");
-        } else {
-            console2.log("WARNING: No payment detected - this might be normal if fees were very small");
-            console2.log("Note: Fees are swapped to USDC, so check USDC balance");
+        // Execute remove liquidity via helper
+        try helper.removeLiquidity(poolKey, params, "") returns (BalanceDelta delta) {
+            console2.log("[SUCCESS] Liquidez removida!");
+            console2.log("Delta Amount0:", delta.amount0());
+            console2.log("Delta Amount1:", delta.amount1());
+            
+            // Positive deltas mean we receive tokens
+            if (delta.amount0() > 0) {
+                console2.log("Tokens0 recebidos:", uint128(int128(delta.amount0())));
+            }
+            if (delta.amount1() > 0) {
+                console2.log("Tokens1 recebidos:", uint128(int128(delta.amount1())));
+            }
+        } catch Error(string memory reason) {
+            console2.log("[ERRO] Falha ao remover liquidez:", reason);
+        } catch (bytes memory lowLevelData) {
+            console2.log("[ERRO] Falha ao remover liquidez (low level)");
         }
         
         vm.stopBroadcast();
+        
+        // Verify liquidity was removed
+        uint128 remainingLiquidity = poolManager.getLiquidity(poolId);
+        console2.log("");
+        console2.log("=== Verificacao Final ===");
+        console2.log("Liquidez restante:", remainingLiquidity);
+        
+        if (remainingLiquidity == 0) {
+            console2.log("[SUCCESS] Toda liquidez foi removida!");
+        } else {
+            console2.log("[AVISO] Ainda ha liquidez na pool:", remainingLiquidity);
+        }
     }
 }
-

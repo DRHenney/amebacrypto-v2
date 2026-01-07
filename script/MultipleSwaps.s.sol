@@ -35,8 +35,8 @@ contract MultipleSwaps is Script {
         // Number of swaps to execute (default: 10)
         uint256 numSwaps = vm.envOr("NUM_SWAPS", uint256(10));
         
-        // Amount per swap (default: 0.001 WETH)
-        uint256 wethAmountPerSwap = vm.envOr("SWAP_WETH_AMOUNT", uint256(1000000000000000)); // 0.001 WETH
+        // Amount per swap (default: 0.01 WETH - aumentado para gerar fees maiores)
+        uint256 wethAmountPerSwap = vm.envOr("SWAP_WETH_AMOUNT", uint256(10000000000000000)); // 0.01 WETH
         
         // Alternate swap directions (true = alternate, false = all same direction)
         bool alternateDirections = vm.envOr("ALTERNATE_DIRECTIONS", true);
@@ -51,7 +51,7 @@ contract MultipleSwaps is Script {
         poolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 5000, // 0.5% (nova pool)
+            fee: 3000, // 0.3% (pool existente)
             tickSpacing: 60,
             hooks: IHooks(hookAddress)
         });
@@ -134,8 +134,9 @@ contract MultipleSwaps is Script {
             // Adjust amount for USDC->WETH swaps (convert WETH amount to approximate USDC amount)
             uint256 actualSwapAmount = swapAmount;
             if (zeroForOne) {
-                // For USDC->WETH, approximate: 0.001 WETH ≈ $3, so use ~3000 USDC (6 decimals)
-                actualSwapAmount = 3000 * 1e6; // 3000 USDC
+                // For USDC->WETH, use a larger amount to generate more fees
+                // Use 0.1 USDC (100000 wei with 6 decimals) - generates ~300 wei fee per swap
+                actualSwapAmount = 100000; // 0.1 USDC (100,000 wei with 6 decimals)
                 
                 // Check if we have enough USDC
                 uint256 currentUsdcBalance = usdc.balanceOf(deployer);

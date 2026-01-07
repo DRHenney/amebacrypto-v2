@@ -25,9 +25,8 @@ contract RemoveAllLiquidityFromOldPool is Script {
         address token0Address = vm.envAddress("TOKEN0_ADDRESS");
         address token1Address = vm.envAddress("TOKEN1_ADDRESS");
         
-        // Get hook address from env or use a default old one
-        // Default: oldest hook from documentation (0x7BC9dDcbE9F25A249Ac4c07a6d86616E78E45540)
-        address hookAddress = vm.envOr("OLD_HOOK_ADDRESS", address(0x7BC9dDcbE9F25A249Ac4c07a6d86616E78E45540));
+        // Get hook address from env (current hook)
+        address hookAddress = vm.envAddress("HOOK_ADDRESS");
         
         address deployer = vm.addr(deployerPrivateKey);
         
@@ -111,7 +110,8 @@ contract RemoveAllLiquidityFromOldPool is Script {
         console2.log("Current Tick:", currentTick);
         
         // Remove 100% of liquidity (negative delta = remove)
-        int256 liquidityDelta = -int256(uint256(currentLiquidity));
+        // Use int128 as required by ModifyLiquidityParams
+        int128 liquidityDelta = -int128(currentLiquidity);
         
         console2.log("\n=== Removendo TODA a Liquidez ===");
         console2.log("Liquidity Delta (to remove):", liquidityDelta);
@@ -122,11 +122,12 @@ contract RemoveAllLiquidityFromOldPool is Script {
         console2.log("Helper deployed at:", address(helper));
         
         // Prepare modify liquidity params (negative delta = remove)
+        // Note: Must use the exact same ticks and salt used when adding liquidity
         ModifyLiquidityParams memory params = ModifyLiquidityParams({
             tickLower: tickLower,
             tickUpper: tickUpper,
-            liquidityDelta: liquidityDelta,
-            salt: bytes32(0)
+            liquidityDelta: liquidityDelta, // int128 (negative = remove)
+            salt: bytes32(0) // Same salt used when adding
         });
         
         bytes memory hookData = "";

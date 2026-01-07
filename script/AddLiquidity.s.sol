@@ -40,11 +40,11 @@ contract AddLiquidity is Script {
         Currency currency0 = Currency.wrap(token0Address < token1Address ? token0Address : token1Address);
         Currency currency1 = Currency.wrap(token0Address < token1Address ? token1Address : token0Address);
         
-        // Usar fee 3000 (0.3%) para nova pool criada
+        // Usar fee 3000 (0.3%) - pool existente
         poolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 3000, // 0.3% (nova pool com preço razoável)
+            fee: 3000, // 0.3% (pool existente)
             tickSpacing: 60,
             hooks: IHooks(hookAddress)
         });

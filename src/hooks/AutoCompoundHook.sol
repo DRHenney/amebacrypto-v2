@@ -447,24 +447,24 @@ contract AutoCompoundHook is BaseHook {
         }
         
         // Acumular fees calculadas
-        if (fee0 > 0 || fee1 > 0) {
-            accumulatedFees0[poolId] += fee0;
-            accumulatedFees1[poolId] += fee1;
-            
-            // Emitir evento de fees acumuladas
-            uint256 totalFees0 = accumulatedFees0[poolId];
-            uint256 totalFees1 = accumulatedFees1[poolId];
-            uint256 feesValueUSD = _calculateFeesValueUSD(poolId, totalFees0, totalFees1);
-            
-            emit FeesAccumulated(
-                poolId,
-                fee0,
-                fee1,
-                totalFees0,
-                totalFees1,
-                feesValueUSD
-            );
-        }
+        // DEBUG: Sempre acumular, mesmo se fees forem muito pequenas
+        // Isso garante que fees mínimas não sejam perdidas
+        accumulatedFees0[poolId] += fee0;
+        accumulatedFees1[poolId] += fee1;
+        
+        // Emitir evento de fees acumuladas (sempre, mesmo se 0)
+        uint256 totalFees0 = accumulatedFees0[poolId];
+        uint256 totalFees1 = accumulatedFees1[poolId];
+        uint256 feesValueUSD = _calculateFeesValueUSD(poolId, totalFees0, totalFees1);
+        
+        emit FeesAccumulated(
+            poolId,
+            fee0,
+            fee1,
+            totalFees0,
+            totalFees1,
+            feesValueUSD
+        );
         
         // Não fazer compound aqui para evitar gas alto
         // O compound deve ser feito externamente via keeper ou checkAndCompound()
