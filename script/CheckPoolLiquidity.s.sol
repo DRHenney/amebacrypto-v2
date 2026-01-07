@@ -121,11 +121,40 @@ contract CheckPoolLiquidity is Script {
         }
         
         // Verificar se o preço está dentro do range
-        if (tick < tickLower || tick > tickUpper) {
-            console2.log("[AVISO] Preco atual esta fora do range de liquidez!");
-            console2.log("Current Tick:", tick);
-            console2.log("Tick Range Lower:", tickLower);
-            console2.log("Tick Range Upper:", tickUpper);
+        if (tickLower != 0 || tickUpper != 0) {
+            if (tick < tickLower || tick > tickUpper) {
+                console2.log("[AVISO] Preco atual esta FORA do range de liquidez!");
+                console2.log("Current Tick:", tick);
+                console2.log("Tick Range Lower:", tickLower);
+                console2.log("Tick Range Upper:", tickUpper);
+                console2.log("Pool esta FORA do range - precisa adicionar liquidez no tick atual!");
+            } else {
+                console2.log("[OK] Preco atual esta DENTRO do range");
+                console2.log("Current Tick:", tick);
+                console2.log("Tick Range Lower:", tickLower);
+                console2.log("Tick Range Upper:", tickUpper);
+            }
+        }
+        
+        // Verificar se há ticks iniciais
+        if (hasInitialTicks) {
+            console2.log("");
+            console2.log("=== Analise de Range ===");
+            if (tick < initialTickLower || tick > initialTickUpper) {
+                console2.log("[ERRO] Pool esta FORA dos ticks iniciais!");
+                console2.log("Current Tick:", tick);
+                console2.log("Initial Tick Lower:", initialTickLower);
+                console2.log("Initial Tick Upper:", initialTickUpper);
+                console2.log("");
+                console2.log("ISSO EXPLICA POR QUE A LIQUIDEZ E 0!");
+                console2.log("Os swaps moveram o preco para fora do range inicial.");
+                console2.log("");
+                console2.log("Solucao:");
+                console2.log("  1. Adicionar liquidez no tick atual OU");
+                console2.log("  2. Adicionar liquidez em um range mais amplo");
+            } else {
+                console2.log("[OK] Pool esta dentro dos ticks iniciais");
+            }
         }
     }
 }
