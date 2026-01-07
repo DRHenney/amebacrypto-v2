@@ -51,7 +51,7 @@ contract MultipleSwaps is Script {
         poolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 3000, // 0.3% (pool atual)
+            fee: 5000, // 0.5% (nova pool)
             tickSpacing: 60,
             hooks: IHooks(hookAddress)
         });
