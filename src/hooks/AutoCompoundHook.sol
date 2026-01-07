@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
-import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {BalanceDelta, BalanceDeltaLibrary, toBalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
@@ -1086,6 +1086,8 @@ contract AutoCompoundHook is BaseHook {
 
     /// @notice Transfere protocol fees acumuladas para feeRecipient (pode ser chamado pelo CompoundHelper)
     /// @dev Converte todas as protocol fees para USDC e envia para o fee recipient
+    /// @dev Se valores são muito pequenos para swap, transfere os tokens originais diretamente
+    /// @dev Gas da transferência é pago pela conta executora, não pelas fees
     /// @param key A chave da pool (necessária para identificar os tokens e fazer swaps)
     function transferProtocolFees(PoolKey calldata key) external {
         // Pode ser chamado pelo CompoundHelper (após unlockCallback) ou pelo owner
@@ -1103,25 +1105,52 @@ contract AutoCompoundHook is BaseHook {
         }
         
         // Os tokens já devem estar no hook (transferidos pelo CompoundHelper via take)
-        // Fazer swap para USDC se necessário
+        // Threshold mínimo para fazer swap (evita falhas com valores muito pequenos)
+        // 1000 USDC (6 decimals) = 1000000 wei = valor mínimo razoável para swap
+        uint256 minSwapAmount = 1000000; // 0.001 USDC equivalente
+        
         Currency usdcCurrency = Currency.wrap(USDC());
         bool currency0IsUSDC = key.currency0 == usdcCurrency;
         bool currency1IsUSDC = key.currency1 == usdcCurrency;
         
-        // Se token0 não é USDC, fazer swap
-        if (amount0 > 0 && !currency0IsUSDC) {
-            _swapToUSDC(key, key.currency0, amount0);
+        // Processar token0
+        if (amount0 > 0) {
+            if (currency0IsUSDC) {
+                // Já é USDC, transferir diretamente
+                IERC20(Currency.unwrap(key.currency0)).transfer(feeRecipient, amount0);
+            } else if (amount0 >= minSwapAmount) {
+                // Valor suficiente para swap, tentar converter para USDC
+                _swapToUSDC(key, key.currency0, amount0);
+            } else {
+                // Valor muito pequeno para swap, transferir token original diretamente
+                // Gas da transferência é pago pela conta executora, não pelas fees
+                CurrencyLibrary.transfer(key.currency0, feeRecipient, amount0);
+            }
         }
         
-        // Se token1 não é USDC, fazer swap
-        if (amount1 > 0 && !currency1IsUSDC) {
-            _swapToUSDC(key, key.currency1, amount1);
+        // Processar token1
+        if (amount1 > 0) {
+            if (currency1IsUSDC) {
+                // Já é USDC, transferir diretamente
+                IERC20(Currency.unwrap(key.currency1)).transfer(feeRecipient, amount1);
+            } else if (amount1 >= minSwapAmount) {
+                // Valor suficiente para swap, tentar converter para USDC
+                _swapToUSDC(key, key.currency1, amount1);
+            } else {
+                // Valor muito pequeno para swap, transferir token original diretamente
+                // Gas da transferência é pago pela conta executora, não pelas fees
+                CurrencyLibrary.transfer(key.currency1, feeRecipient, amount1);
+            }
         }
         
-        // Transferir todo USDC acumulado para feeRecipient
+        // Transferir todo USDC acumulado para feeRecipient (de swaps bem-sucedidos)
         uint256 usdcBalance = IERC20(USDC()).balanceOf(address(this));
         if (usdcBalance > 0) {
             IERC20(USDC()).transfer(feeRecipient, usdcBalance);
+        }
+        
+        // Emitir evento sempre que houver transferência
+        if (amount0 > 0 || amount1 > 0) {
             emit ProtocolFeesTransferred(feeRecipient, amount0, amount1);
         }
     }
